@@ -1,18 +1,6 @@
-# Your ~/.ssh/nixbuild.config should look something like this:
-# Host stash
-#  StrictHostKeyChecking No
-#  UserKnownHostsFile /dev/null
-#  IdentityFile /home/steve/.ssh/nixbuild_rsa
-#
-# And that key should be a read-only, passwordless key.
-#
-# You also want your nix sandbox paths setup:
-#
-# NixOS /etc/nixos/configuration.nix: nix.sandboxPaths = ["/home/steve/.ssh"];
-# Nix   /home/steve/.config/nix/nix.conf: sandbox-paths = ["/home/steve/.ssh"];
 .PHONY: nix-shell
 nix-shell:
-	nix-shell -I ssh-config-file=$$HOME/.ssh/nixbuild.config --show-trace --pure
+	nix-shell --show-trace --pure
 
 .PHONY: check-nix-shell
 check-nix-shell:
