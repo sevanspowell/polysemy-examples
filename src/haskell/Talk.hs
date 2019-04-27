@@ -13,12 +13,6 @@ import Data.ByteString (ByteString)
 data Stat = ProcessedRecordStat
 data Record
 
-data Error e m a where
-  Throw :: e -> Error e m a
-  Catch :: ∀ e m a. m a -> (e -> m a) -> Error e m a
-
-makeSem ''Error
-
 data FileProvider m a where
   OpenFile :: FilePath -> FileProvider m ByteString
   ReadLine :: ByteString -> FileProvider m a
