@@ -36,8 +36,8 @@ let
     polysemy = self.pkgs.fetchFromGitHub {
       owner = "isovector";
       repo = "polysemy";
-      sha256 = "19nkhbwp52cw8avcc7v625cnp7rn6ngr25xalzcarm6h916s0dgh";
-      rev = "d886b32fe421d8fdca0da7c3f1188a60973f676a";
+      sha256 = "0nyp4mmlz3hkppvaqzb9cr870cmhwzvcv7f2mjihyamzs3mjw5dn";
+      rev = "fadd603d592cba8ae25c5be7d1e2b656ee75935b";
     };
   };
 
