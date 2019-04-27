@@ -8,31 +8,42 @@ import Polysemy.Output
 import Polysemy.Input
 import Polysemy.State
 
+import Data.ByteString (ByteString)
+
 data Stat = ProcessedRecordStat
 data Record
 
-data FileProvider i m a where
-  ReadLine :: FilePath -> FileProvider i m i
+data Error e m a where
+  Throw :: e -> Error e m a
+  Catch :: ∀ e m a. m a -> (e -> m a) -> Error e m a
+
+makeSem ''Error
+
+data FileProvider m a where
+  OpenFile :: FilePath -> FileProvider m ByteString
+  ReadLine :: ByteString -> FileProvider m a
 
 makeSem ''FileProvider
 
 data Encryption m a where
-  DecryptFile :: FilePath -> Encryption m a
+  DecryptFile :: FilePath -> Encryption m ByteString
 
 makeSem ''Encryption
 
-mkFileProvider :: FilePath -> Sem (Input i ': r) a -> Sem (FileProvider i ': r) a
-mkFileProvider source =
+mkFileProvider :: ∀i r a. FilePath -> Sem (Input i ': r) a -> Sem (FileProvider ': r) a
+mkFileProvider source m = do
+  stream <- openFile source
   -- 'reinterpret' allows us to take any effect and encode it as a new
   -- effect. Here we reinterpret 'Input' effects as 'FileProvider'
   -- effects.
-  reinterpret $ \case
-    Input -> readLine source
+  reinterpret (\case
+    Input -> readLine stream
+              ) m
 
-csvInput :: FilePath -> Sem (Input (Maybe Record) ': r) a -> Sem (FileProvider (Maybe Record) ': r) a
+csvInput :: FilePath -> Sem (Input (Maybe Record) ': r) a -> Sem (FileProvider ': r) a
 csvInput file = mkFileProvider file
 
-decryptFileProvider :: Sem (FileProvider i ': r) a -> Sem (Encryption ': FileProvider i ': r) a
+decryptFileProvider :: Sem (FileProvider ': r) a -> Sem (Encryption ': FileProvider ': r) a
 decryptFileProvider =
   -- Insert some logic around the 'FileProvider' effect so that we
   -- make sure to decrypt the file (using the 'Encryption' effect)
@@ -40,9 +51,8 @@ decryptFileProvider =
   -- We need to use 'reinterpret2' because we are introducing a new
   -- effect and persisting the old one.
   reinterpret2 $ \case
-    ReadLine source -> do
-      decryptFile source
-      readLine source
+    OpenFile file   -> decryptFile file
+    ReadLine stream -> readLine stream
 
 batch :: ∀ o r a. Int -> Sem (Output o ': r) a -> Sem (Output [o] ': r) a
 batch 0 m         =
