@@ -52,6 +52,7 @@ extra-source-files:  CHANGELOG.md
 library
   -- Modules exported by the library.
   exposed-modules:       Basic
+                         Talk
 
   -- Modules included in this library but not exported.
   -- other-modules:
@@ -67,10 +68,12 @@ library
                        , TypeApplications
                        , TypeOperators
                        , TypeFamilies
+                       , UnicodeSyntax
 
   -- Other library packages from which modules are imported.
   build-depends:       base >=4.12 && <4.13
                      , polysemy
+                     , conduit
 
   -- Directories containing source files.
   hs-source-dirs:      src/haskell
