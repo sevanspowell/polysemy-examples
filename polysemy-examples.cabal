@@ -76,6 +76,7 @@ library
                      , bytestring
                      , conduit
                      , polysemy
+                     , resourcet
 
   -- Directories containing source files.
   hs-source-dirs:      src/haskell
