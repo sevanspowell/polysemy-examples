@@ -9,6 +9,7 @@ import Polysemy
 import Polysemy.Output
 import Polysemy.Input
 import Polysemy.State
+import Polysemy.Trace
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B
@@ -18,9 +19,15 @@ import qualified Data.Conduit.Combinators as C
 import Control.Monad.Trans.Resource (MonadResource, runResourceT, ResourceT)
 import Control.Monad.IO.Class (liftIO)
 import qualified Data.Aeson as A
+import qualified Data.Text.Encoding as T
 
 data Stat = ProcessedRecordStat
+
 data Record = Record B.ByteString
+  deriving Show
+
+instance A.ToJSON Record where
+  toJSON (Record bs) = A.String (T.decodeUtf8 bs)
 
 data FileProvider m a where
   OpenFile :: FilePath -> FileProvider m B.ByteString
@@ -47,9 +54,14 @@ localFileProvider
   => Sem (FileProvider ': r) a
   -> Sem r a
 localFileProvider = interpret $ \case
-  OpenFile fp -> sendM @IO $ B.readFile fp
+  OpenFile fp -> sendM $ B.readFile fp
 
-csvInput :: forall i r a s . FilePath -> Sem (Input (Maybe Record) ': r) a -> Sem (FileProvider ': r) a
+csvInput
+  :: ( Member FileProvider r
+     )
+  => FilePath
+  -> Sem (Input (Maybe Record) ': r) a
+  -> Sem r a
 csvInput source m = do
   stream <- openFile source
 
@@ -58,16 +70,19 @@ csvInput source m = do
   -- runListInput runs the input effect by providing a new element of
   -- the list to each input effect.
   -- TODO investigate possibility of conduit with runMonadicInput
-  raise $ runListInput streamLines m
+  runListInput streamLines m
 
-decryptFileProvider :: Sem (FileProvider ': r) a -> Sem (Encryption ': FileProvider ': r) a
+decryptFileProvider
+  :: Member Encryption r
+  => Sem (FileProvider ': r) a
+  -> Sem (FileProvider ': r) a
 decryptFileProvider =
   -- Insert some logic around the 'FileProvider' effect so that we
   -- make sure to decrypt the file (using the 'Encryption' effect)
   -- before reading it.
   -- We need to use 'reinterpret2' because we are introducing a new
   -- effect and persisting the old one.
-  reinterpret2 $ \case
+  intercept $ \case
     OpenFile file   -> do
       stream <- openFile file
       decryptStream stream
@@ -124,8 +139,8 @@ batch batchSize m = do
   pure a
 
 postOutput
-  :: ( Member HTTP r
-     , A.ToJSON i
+  :: ( A.ToJSON i
+     , Member HTTP r
      )
   => (i -> HttpRequest POST)
   -> Sem (Output i ': r) a
@@ -147,18 +162,19 @@ ingest
      -- , Member (Output Stat) r
      )
   => Sem r ()
-ingest = input >>= \case
+ingest = input @(Maybe Record) >>= \case
   Nothing     -> pure ()
   Just record -> do
     output @Record record
     -- output ProcessedRecordStat
     ingest
 
-main = ingest
+mainP :: IO ()
+mainP = ingest
      & csvInput "file.csv"
      & decryptFileProvider
      & localFileProvider
-     & batch @Record 500
+     -- & batch @Record 2
      & postOutput @Record mkApiCall
      & runEncryption
      & runHTTP
