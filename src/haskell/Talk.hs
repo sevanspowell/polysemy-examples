@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Talk where
 
@@ -10,6 +11,7 @@ import Polysemy.Input
 import Polysemy.State
 
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BL
 import Data.Conduit (ConduitT, (.|), runConduitRes)
 import qualified Data.Conduit.Combinators as C
@@ -17,15 +19,10 @@ import Control.Monad.Trans.Resource (MonadResource, runResourceT, ResourceT)
 import Control.Monad.IO.Class (liftIO)
 
 data Stat = ProcessedRecordStat
-data Record
+data Record = Record B.ByteString
 
-data FileProvider s m a where
-  OpenFile :: FilePath -> FileProvider s m s
-  NextLine :: (B.ByteString -> a) -> s -> FileProvider s m a
-
--- Given a stream :: s
--- Map some function over each line, producing some input type (l -> Maybe i)
--- 
+data FileProvider m a where
+  OpenFile :: FilePath -> FileProvider m B.ByteString
 
 makeSem ''FileProvider
 
@@ -34,30 +31,25 @@ data Encryption m a where
 
 makeSem ''Encryption
 
--- (forall x m. FileProvider m x -> Sem r x)
-
 localFileProvider
   :: Member (Lift IO) r
-  => Sem (FileProvider (ConduitT () B.ByteString (ResourceT IO) ()) ': r) a
+  => Sem (FileProvider ': r) a
   -> Sem r a
 localFileProvider = interpret $ \case
-  OpenFile fp -> sendM @IO $ pure $ C.sourceFile fp
-  NextLine parse stream -> sendM @IO $ pure $ stream .| C.map (parse)
+  OpenFile fp -> sendM @IO $ B.readFile fp
 
-csvInput :: forall i r a s . FilePath -> Sem (Input i ': r) a -> Sem (FileProvider s ': r) a
+csvInput :: forall i r a s . FilePath -> Sem (Input (Maybe Record) ': r) a -> Sem (FileProvider ': r) a
 csvInput source m = do
-  stream <- openFile @s source
-  -- 'reinterpret' allows us to take any effect and encode it as a new
-  -- effect. Here we reinterpret 'Input' effects as 'FileProvider'
-  -- effects.
-  let
-    parseRecord :: B.ByteString -> i
-    parseRecord = undefined
-  reinterpret (\case
-    Input -> nextLine parseRecord stream
-              ) m
+  stream <- openFile source
 
-decryptFileProvider :: Sem (FileProvider s ': r) a -> Sem (Encryption ': FileProvider s ': r) a
+  let streamLines = Record <$> B.lines stream
+
+  -- runListInput runs the input effect by providing a new element of
+  -- the list to each input effect.
+  -- TODO look at runMonadicInput
+  raise $ runListInput streamLines m
+
+decryptFileProvider :: Sem (FileProvider ': r) a -> Sem (Encryption ': FileProvider ': r) a
 decryptFileProvider =
   -- Insert some logic around the 'FileProvider' effect so that we
   -- make sure to decrypt the file (using the 'Encryption' effect)
@@ -126,6 +118,12 @@ ingest = input >>= \case
     output @Record record
     output ProcessedRecordStat
     ingest
+
+-- main = ingest
+--      & csvInput "file.csv"
+--      & decryptFileProvider
+--      & localFileProvider
+--      & batch @Record 500
 
 -- main = ingest
 --        -- { Input Record, Output Record, Output Stat }
