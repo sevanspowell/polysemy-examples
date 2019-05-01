@@ -11,6 +11,7 @@ import Polysemy.Input
 import Polysemy.State
 import Polysemy.Trace
 
+import Control.Monad (when)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BL
@@ -91,7 +92,11 @@ runEncryption :: Sem (Encryption ': r) a -> Sem r a
 runEncryption = interpret $ \case
   DecryptStream stream -> pure $ stream
 
-batch :: ∀ o r a. Int -> Sem (Output o ': r) a -> Sem (Output [o] ': r) a
+batch
+  :: ∀ o r a
+   . Int
+  -> Sem (Output o ': r) a
+  -> Sem (Output [o] ': r) a
 batch 0 m         =
   -- If batch size is 0, we:
   -- 'runIgnoringOutput' which will remove the output effects from the
@@ -128,14 +133,13 @@ batch batchSize m = do
                                             Output o -> do
                                               acc <- get
                                               case length acc of
-                                                n | n >= batchSize -> do
-                                                      let (emit, acc') = splitAt batchSize acc
-                                                      output emit
-                                                      put acc'
+                                                n | n == batchSize -> do
+                                                      output acc
+                                                      put [o]
                                                   | otherwise -> put (acc <> [o])
                                                         
                                                   ) m
-  output leftOver
+  when (length leftOver > 0) $ output leftOver
   pure a
 
 postOutput
@@ -174,8 +178,8 @@ mainP = ingest
      & csvInput "file.csv"
      & decryptFileProvider
      & localFileProvider
-     -- & batch @Record 2
-     & postOutput @Record mkApiCall
+     & batch @Record 2
+     & postOutput @[Record] mkApiCall
      & runEncryption
      & runHTTP
      & runM
