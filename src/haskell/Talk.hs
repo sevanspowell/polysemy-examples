@@ -19,8 +19,9 @@ import Control.Monad.IO.Class (liftIO)
 data Stat = ProcessedRecordStat
 data Record
 
-data FileProvider m a where
-  OpenFile :: FilePath -> FileProvider m BL.ByteString
+data FileProvider s m a where
+  OpenFile :: FilePath -> FileProvider s m s
+  NextLine :: (B.ByteString -> a) -> s -> FileProvider s m a
 
 -- Given a stream :: s
 -- Map some function over each line, producing some input type (l -> Maybe i)
@@ -33,24 +34,30 @@ data Encryption m a where
 
 makeSem ''Encryption
 
+-- (forall x m. FileProvider m x -> Sem r x)
+
 localFileProvider
   :: Member (Lift IO) r
-  => Sem (FileProvider ': r) a
+  => Sem (FileProvider (ConduitT () B.ByteString (ResourceT IO) ()) ': r) a
   -> Sem r a
 localFileProvider = interpret $ \case
-  OpenFile fp -> sendM $ BL.readFile fp
+  OpenFile fp -> sendM @IO $ pure $ C.sourceFile fp
+  NextLine parse stream -> sendM @IO $ pure $ stream .| C.map (parse)
 
-csvInput :: FilePath -> Sem (Input i ': r) a -> Sem (FileProvider ': r) a
+csvInput :: forall i r a s . FilePath -> Sem (Input i ': r) a -> Sem (FileProvider s ': r) a
 csvInput source m = do
-  stream <- openFile source
+  stream <- openFile @s source
   -- 'reinterpret' allows us to take any effect and encode it as a new
   -- effect. Here we reinterpret 'Input' effects as 'FileProvider'
   -- effects.
+  let
+    parseRecord :: B.ByteString -> i
+    parseRecord = undefined
   reinterpret (\case
-    Input -> nextLine stream
+    Input -> nextLine parseRecord stream
               ) m
 
-decryptFileProvider :: Sem (FileProvider ': r) a -> Sem (Encryption ': FileProvider ': r) a
+decryptFileProvider :: Sem (FileProvider s ': r) a -> Sem (Encryption ': FileProvider s ': r) a
 decryptFileProvider =
   -- Insert some logic around the 'FileProvider' effect so that we
   -- make sure to decrypt the file (using the 'Encryption' effect)
