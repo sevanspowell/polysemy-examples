@@ -17,6 +17,7 @@ import Data.Conduit (ConduitT, (.|), runConduitRes)
 import qualified Data.Conduit.Combinators as C
 import Control.Monad.Trans.Resource (MonadResource, runResourceT, ResourceT)
 import Control.Monad.IO.Class (liftIO)
+import qualified Data.Aeson as A
 
 data Stat = ProcessedRecordStat
 data Record = Record B.ByteString
@@ -27,9 +28,19 @@ data FileProvider m a where
 makeSem ''FileProvider
 
 data Encryption m a where
-  DecryptFile :: FilePath -> Encryption m a
+  DecryptStream :: B.ByteString -> Encryption m B.ByteString
 
 makeSem ''Encryption
+
+data POST
+
+data HttpRequest (method :: *) where
+  HttpRequest :: B.ByteString -> HttpRequest method
+
+data HTTP m a where
+  PostHttp :: HttpRequest POST -> HTTP m ()
+
+makeSem ''HTTP
 
 localFileProvider
   :: Member (Lift IO) r
@@ -46,7 +57,7 @@ csvInput source m = do
 
   -- runListInput runs the input effect by providing a new element of
   -- the list to each input effect.
-  -- TODO look at runMonadicInput
+  -- TODO investigate possibility of conduit with runMonadicInput
   raise $ runListInput streamLines m
 
 decryptFileProvider :: Sem (FileProvider ': r) a -> Sem (Encryption ': FileProvider ': r) a
@@ -57,7 +68,13 @@ decryptFileProvider =
   -- We need to use 'reinterpret2' because we are introducing a new
   -- effect and persisting the old one.
   reinterpret2 $ \case
-    OpenFile file   -> decryptFile file
+    OpenFile file   -> do
+      stream <- openFile file
+      decryptStream stream
+
+runEncryption :: Sem (Encryption ': r) a -> Sem r a
+runEncryption = interpret $ \case
+  DecryptStream stream -> pure $ stream
 
 batch :: ∀ o r a. Int -> Sem (Output o ': r) a -> Sem (Output [o] ': r) a
 batch 0 m         =
@@ -106,24 +123,47 @@ batch batchSize m = do
   output leftOver
   pure a
 
+postOutput
+  :: ( Member HTTP r
+     , A.ToJSON i
+     )
+  => (i -> HttpRequest POST)
+  -> Sem (Output i ': r) a
+  -> Sem r a
+postOutput mkReq = interpret $ \case
+  Output i -> postHttp $ mkReq i
+
+mkApiCall :: A.ToJSON i => i -> HttpRequest POST
+mkApiCall = HttpRequest . BL.toStrict . A.encode
+
+runHTTP :: Member (Lift IO) r => Sem (HTTP ': r) a -> Sem r a
+runHTTP = interpret (\case
+  PostHttp (HttpRequest body) -> sendM . putStrLn . show $ body
+                    )
+  
 ingest
   :: ( Member (Input (Maybe Record)) r
      , Member (Output Record) r
-     , Member (Output Stat) r
+     -- , Member (Output Stat) r
      )
   => Sem r ()
 ingest = input >>= \case
   Nothing     -> pure ()
   Just record -> do
     output @Record record
-    output ProcessedRecordStat
+    -- output ProcessedRecordStat
     ingest
 
--- main = ingest
---      & csvInput "file.csv"
---      & decryptFileProvider
---      & localFileProvider
---      & batch @Record 500
+main = ingest
+     & csvInput "file.csv"
+     & decryptFileProvider
+     & localFileProvider
+     & batch @Record 500
+     & postOutput @Record mkApiCall
+     & runEncryption
+     & runHTTP
+     & runM
+        
 
 -- main = ingest
 --        -- { Input Record, Output Record, Output Stat }
