@@ -1,6 +1,6 @@
 .PHONY: nix-shell
 nix-shell:
-	nix-shell --show-trace --pure
+	nix-shell --pure
 
 .PHONY: check-nix-shell
 check-nix-shell:
